@@ -23,6 +23,9 @@ class VoiceMemoApp {
       pauseResumeBtn: document.getElementById('pause-resume-btn'),
       pauseIcon: document.getElementById('pause-icon'),
       pauseText: document.getElementById('pause-text'),
+      manualInputBtn: document.getElementById('manual-input-btn'),
+      manualIcon: document.getElementById('manual-icon'),
+      manualText: document.getElementById('manual-text'),
       submitBtn: document.getElementById('submit-btn'),
       clearBtn: document.getElementById('clear-btn'),
       continueBtn: document.getElementById('continue-btn'),
@@ -44,11 +47,12 @@ class VoiceMemoApp {
       this.recognition.interimResults = true;
       this.recognition.lang = 'ja-JP';
     } else {
-      alert('お使いのブラウザは Web Speech API に対応していません。Android Chrome等でお試しください。');
+      console.warn('Web Speech API 非対応ブラウザです。手入力モードを優先します。');
     }
 
     // 内部状態
     this.isPaused = false;
+    this.isManualMode = false;
     this.isSubmitting = false;
     this.finalTranscript = '';
     this.interimTranscript = '';
@@ -57,6 +61,7 @@ class VoiceMemoApp {
     this.STORAGE_KEYS = {
       TEXT: 'farm_voice_memo_text',
       IS_PAUSED: 'farm_voice_memo_is_paused',
+      IS_MANUAL: 'farm_voice_memo_is_manual',
       GAS_URL: 'farm_voice_memo_gas_url',
       SECRET_KEY: 'farm_voice_memo_secret_key'
     };
@@ -69,14 +74,19 @@ class VoiceMemoApp {
     this.restoreState();
     this.bindEvents();
 
-    if (this.hasSpeechSupport) {
+    if (this.isManualMode) {
+      this.enableManualMode(true);
+    } else if (this.hasSpeechSupport) {
       this.setupRecognition();
-      // アプリ起動時に即座に録音開始
+      // デフォルト: アプリ起動時に即座に録音開始
       if (!this.isPaused) {
         this.startRecognition();
       } else {
         this.updateStatus('paused', '一時停止中');
       }
+    } else {
+      // 音声非対応端末は自動で手入力モードへ
+      this.enableManualMode(true);
     }
   }
 
@@ -101,7 +111,7 @@ class VoiceMemoApp {
     this.elements.settingsPanel.classList.add('hidden');
   }
 
-  // 状態復元 (スリープ・画面オフ復帰対策)
+  // 状態復元
   restoreState() {
     const savedText = localStorage.getItem(this.STORAGE_KEYS.TEXT);
     if (savedText) {
@@ -113,12 +123,18 @@ class VoiceMemoApp {
     if (savedIsPaused !== null) {
       this.isPaused = savedIsPaused === 'true';
     }
+
+    const savedIsManual = localStorage.getItem(this.STORAGE_KEYS.IS_MANUAL);
+    if (savedIsManual !== null) {
+      this.isManualMode = savedIsManual === 'true';
+    }
   }
 
   // 状態保存
   persistState() {
     localStorage.setItem(this.STORAGE_KEYS.TEXT, this.finalTranscript);
     localStorage.setItem(this.STORAGE_KEYS.IS_PAUSED, this.isPaused);
+    localStorage.setItem(this.STORAGE_KEYS.IS_MANUAL, this.isManualMode);
   }
 
   // イベントバインド
@@ -131,8 +147,19 @@ class VoiceMemoApp {
 
     // 操作ボタン
     this.elements.pauseResumeBtn.addEventListener('click', () => this.togglePauseResume());
+    this.elements.manualInputBtn.addEventListener('click', () => this.toggleManualInputMode());
     this.elements.submitBtn.addEventListener('click', () => this.submitMemo());
     this.elements.clearBtn.addEventListener('click', () => this.clearMemo());
+
+    // テキストエリアの手入力監視
+    this.elements.recognizedText.addEventListener('input', (e) => {
+      if (this.isManualMode) {
+        this.finalTranscript = e.target.value;
+        this.interimTranscript = '';
+        this.updateCharCounterOnly();
+        this.persistState();
+      }
+    });
 
     // Step 2 ボタン
     this.elements.continueBtn.addEventListener('click', () => this.resetAndStartNew());
@@ -143,7 +170,7 @@ class VoiceMemoApp {
       if (document.visibilityState === 'visible') {
         console.log('画面が再表示されました。状態を確認・再開します。');
         this.restoreState();
-        if (!this.isPaused && !this.isSubmitting && this.hasSpeechSupport) {
+        if (!this.isManualMode && !this.isPaused && !this.isSubmitting && this.hasSpeechSupport) {
           this.startRecognition();
         }
       } else {
@@ -155,6 +182,7 @@ class VoiceMemoApp {
   // 音声認識イベント設定
   setupRecognition() {
     this.recognition.onresult = (event) => {
+      if (this.isManualMode) return;
       let currentInterim = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
@@ -171,8 +199,7 @@ class VoiceMemoApp {
     this.recognition.onerror = (event) => {
       console.warn('Speech recognition error:', event.error);
       if (event.error === 'no-speech' || event.error === 'network') {
-        // 自動リカバリ試行
-        if (!this.isPaused && !this.isSubmitting) {
+        if (!this.isManualMode && !this.isPaused && !this.isSubmitting) {
           setTimeout(() => this.startRecognition(), 500);
         }
       }
@@ -180,8 +207,7 @@ class VoiceMemoApp {
 
     this.recognition.onend = () => {
       console.log('Speech recognition ended');
-      // 一時停止中でなく、送信中でなければ自動で認識を再接続
-      if (!this.isPaused && !this.isSubmitting) {
+      if (!this.isManualMode && !this.isPaused && !this.isSubmitting) {
         this.startRecognition();
       }
     };
@@ -189,13 +215,11 @@ class VoiceMemoApp {
 
   // 音声認識開始
   startRecognition() {
-    if (!this.hasSpeechSupport || this.isSubmitting) return;
+    if (!this.hasSpeechSupport || this.isSubmitting || this.isManualMode) return;
     try {
       this.recognition.start();
       this.updateStatus('recording', '録音中...');
-    } catch (e) {
-      // 既にスタートしている場合のエラーを無視
-    }
+    } catch (e) {}
   }
 
   // 音声認識停止
@@ -206,12 +230,16 @@ class VoiceMemoApp {
     } catch (e) {}
   }
 
-  // 表示の更新
+  // 表示の全更新
   updateDisplay() {
     const fullText = this.finalTranscript + (this.interimTranscript ? ' ' + this.interimTranscript : '');
     this.elements.recognizedText.value = fullText;
-    
-    const count = fullText.trim().length;
+    this.updateCharCounterOnly();
+  }
+
+  // 文字数カウントのみ更新
+  updateCharCounterOnly() {
+    const count = this.elements.recognizedText.value.trim().length;
     this.elements.charCount.innerText = count;
 
     if (count <= 10) {
@@ -229,6 +257,14 @@ class VoiceMemoApp {
 
   // 一時停止 / 再開 切替
   togglePauseResume() {
+    if (this.isManualMode) {
+      // 手入力モードから一時停止ボタンを押した場合は音声認識モードに復帰
+      this.enableManualMode(false);
+      this.isPaused = false;
+      this.startRecognition();
+      return;
+    }
+
     if (this.isPaused) {
       // 再開
       this.isPaused = false;
@@ -247,6 +283,34 @@ class VoiceMemoApp {
     this.persistState();
   }
 
+  // 手入力モードの切替
+  toggleManualInputMode() {
+    this.enableManualMode(!this.isManualMode);
+  }
+
+  // 手入力モードの有効化/解除
+  enableManualMode(enable) {
+    this.isManualMode = enable;
+    if (enable) {
+      this.stopRecognition();
+      this.elements.recognizedText.removeAttribute('readonly');
+      this.elements.manualIcon.innerText = '🎙️';
+      this.elements.manualText.innerText = '音声に戻る';
+      this.updateStatus('manual', '手入力中');
+      this.elements.recognizedText.focus();
+    } else {
+      this.elements.recognizedText.setAttribute('readonly', 'readonly');
+      this.elements.manualIcon.innerText = '⌨️';
+      this.elements.manualText.innerText = '手入力する';
+      if (this.isPaused) {
+        this.updateStatus('paused', '一時停止中');
+      } else {
+        this.startRecognition();
+      }
+    }
+    this.persistState();
+  }
+
   // やり直し (クリア)
   clearMemo() {
     if (confirm('入力内容を消去してやり直しますか？')) {
@@ -255,8 +319,10 @@ class VoiceMemoApp {
       this.updateDisplay();
       localStorage.removeItem(this.STORAGE_KEYS.TEXT);
 
-      if (this.isPaused) {
-        this.togglePauseResume(); // 録音状態に戻す
+      if (this.isManualMode) {
+        this.elements.recognizedText.focus();
+      } else if (this.isPaused) {
+        this.togglePauseResume();
       } else {
         this.startRecognition();
       }
@@ -265,11 +331,11 @@ class VoiceMemoApp {
 
   // メモ送信
   async submitMemo() {
-    const textToSend = (this.finalTranscript + ' ' + this.interimTranscript).trim();
+    const textToSend = this.elements.recognizedText.value.trim();
 
     // エラー検知（空送信・ノイズ防止：10文字以下）
     if (textToSend.length <= 10) {
-      alert('うまく認識できませんでした。もう少し長めに喋ってから送信してください。（10文字以上必要です）');
+      alert('入力テキストが短すぎます。10文字以上入力またはお喋りしてから送信してください。');
       return;
     }
 
@@ -288,10 +354,10 @@ class VoiceMemoApp {
     this.updateStatus('submitting', '送信中...');
     this.elements.submitBtn.disabled = true;
     this.elements.pauseResumeBtn.disabled = true;
+    this.elements.manualInputBtn.disabled = true;
     this.elements.clearBtn.disabled = true;
 
     try {
-      // 通信はユーザーが送信ボタンを押した【1回のみ】実行
       const payload = {
         secret_key: secretKey,
         memo_text: textToSend
@@ -308,7 +374,6 @@ class VoiceMemoApp {
       const result = await response.json();
 
       if (result.status === 'success') {
-        // 送信完了 -> ステートクリアして Step 2 画面へ
         this.finalTranscript = '';
         this.interimTranscript = '';
         localStorage.removeItem(this.STORAGE_KEYS.TEXT);
@@ -319,11 +384,16 @@ class VoiceMemoApp {
 
     } catch (err) {
       alert('エラーが発生しました: ' + err.message);
-      this.updateStatus(this.isPaused ? 'paused' : 'recording', this.isPaused ? '一時停止中' : '録音中...');
+      if (this.isManualMode) {
+        this.updateStatus('manual', '手入力中');
+      } else {
+        this.updateStatus(this.isPaused ? 'paused' : 'recording', this.isPaused ? '一時停止中' : '録音中...');
+      }
     } finally {
       this.isSubmitting = false;
       this.elements.submitBtn.disabled = false;
       this.elements.pauseResumeBtn.disabled = false;
+      this.elements.manualInputBtn.disabled = false;
       this.elements.clearBtn.disabled = false;
     }
   }
@@ -341,6 +411,9 @@ class VoiceMemoApp {
     this.finalTranscript = '';
     this.interimTranscript = '';
     this.updateDisplay();
+
+    // デフォルト（音声認識モード）に戻す
+    this.enableManualMode(false);
     this.isPaused = false;
     this.elements.pauseIcon.innerText = '⏸️';
     this.elements.pauseText.innerText = '一時停止';
@@ -351,9 +424,7 @@ class VoiceMemoApp {
   closeApp() {
     this.stopRecognition();
     this.persistState();
-    // PWA/タブの終了試行
     window.close();
-    // window.close() が無効な場合の案内
     setTimeout(() => {
       alert('アプリを終了します。画面を閉じてください。');
     }, 300);

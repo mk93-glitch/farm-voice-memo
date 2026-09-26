@@ -130,6 +130,10 @@ body {
   background-color: #fb8c00;
 }
 
+.status-indicator.manual {
+  background-color: #0288d1;
+}
+
 .status-indicator.submitting {
   background-color: #1e88e5;
   animation: pulse 0.8s infinite;
@@ -160,6 +164,13 @@ textarea#recognized-text {
   color: #000;
   font-weight: 500;
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+textarea#recognized-text:not([readonly]) {
+  border-color: #0288d1;
+  background-color: #f0f9ff;
+  box-shadow: 0 0 8px rgba(2, 136, 209, 0.4);
 }
 
 .char-counter {
@@ -180,20 +191,27 @@ textarea#recognized-text {
 .control-buttons, .complete-buttons {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   margin-top: auto;
+}
+
+.sub-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
 }
 
 .btn {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 4px;
   border: none;
-  border-radius: 16px;
+  border-radius: 14px;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
   transition: transform 0.1s, background-color 0.2s;
   user-select: none;
 }
@@ -203,20 +221,34 @@ textarea#recognized-text {
   box-shadow: 0 2px 4px rgba(0,0,0,0.15);
 }
 
+.btn-medium {
+  padding: 10px 4px;
+  font-size: 0.95rem;
+  min-height: 64px;
+}
+
 .btn-large {
-  padding: 18px 24px;
-  font-size: 1.5rem;
-  min-height: 72px;
+  flex-direction: row;
+  padding: 16px 24px;
+  font-size: 1.6rem;
+  min-height: 76px;
+  gap: 12px;
 }
 
 .btn-extra-large {
-  padding: 24px 32px;
+  flex-direction: row;
+  padding: 22px 32px;
   font-size: 1.7rem;
-  min-height: 90px;
+  min-height: 88px;
+  gap: 12px;
 }
 
 .btn-icon {
-  font-size: 1.8rem;
+  font-size: 1.5rem;
+}
+
+.btn-large .btn-icon, .btn-extra-large .btn-icon {
+  font-size: 2rem;
 }
 
 .btn-primary {
@@ -235,6 +267,15 @@ textarea#recognized-text {
 
 .btn-warning:hover {
   background-color: #e65100;
+}
+
+.btn-info {
+  background-color: #0288d1;
+  color: #ffffff;
+}
+
+.btn-info:hover {
+  background-color: #01579b;
 }
 
 .btn-danger {
