@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>農作業 音声メモ</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#2e7d32">
+  <link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+  <div class="container">
+    <header class="app-header">
+      <h1>🌱 農作業 音声メモ</h1>
+      <button id="settings-toggle-btn" class="icon-btn" title="設定">⚙️</button>
+    </header>
+
+    <!-- 設定モーダル/エリア -->
+    <div id="settings-panel" class="settings-panel hidden">
+      <h3>アプリ設定</h3>
+      <div class="form-group">
+        <label for="gas-url-input">GAS Web App URL:</label>
+        <input type="url" id="gas-url-input" placeholder="https://script.google.com/macros/s/.../exec">
+      </div>
+      <div class="form-group">
+        <label for="secret-key-input">シークレットキー:</label>
+        <input type="text" id="secret-key-input" placeholder="secret-1234">
+      </div>
+      <button id="save-settings-btn" class="btn btn-secondary">設定を保存</button>
+    </div>
+
+    <!-- Step 1: 録音画面 -->
+    <main id="step-recording" class="step-view">
+      <div class="status-bar" id="status-bar">
+        <span class="status-indicator recording" id="status-indicator"></span>
+        <span id="status-text">録音中...</span>
+      </div>
+
+      <div class="text-container">
+        <textarea id="recognized-text" readonly placeholder="ここに音声入力された内容が表示されます..."></textarea>
+      </div>
+
+      <div class="char-counter">
+        <span id="char-count">0</span> 文字
+        <span id="char-warning" class="warning-text hidden">（10文字以上で送信可能）</span>
+      </div>
+
+      <div class="control-buttons">
+        <button id="pause-resume-btn" class="btn btn-large btn-warning">
+          <span class="btn-icon" id="pause-icon">⏸️</span>
+          <span id="pause-text">一時停止</span>
+        </button>
+
+        <button id="submit-btn" class="btn btn-large btn-primary">
+          <span class="btn-icon">📤</span>
+          <span>送信する</span>
+        </button>
+
+        <button id="clear-btn" class="btn btn-large btn-danger">
+          <span class="btn-icon">🔄</span>
+          <span>やり直し</span>
+        </button>
+      </div>
+    </main>
+
+    <!-- Step 2: 送信完了画面 -->
+    <main id="step-complete" class="step-view hidden">
+      <div class="complete-card">
+        <div class="success-icon">✅</div>
+        <h2>送信しました！</h2>
+        <p>スプレッドシートへの保存とGeminiによる自動整理が完了しました。</p>
+      </div>
+
+      <div class="complete-buttons">
+        <button id="continue-btn" class="btn btn-extra-large btn-primary">
+          <span class="btn-icon">🎙️</span>
+          <span>続けて入力する</span>
+        </button>
+
+        <button id="close-btn" class="btn btn-extra-large btn-secondary">
+          <span class="btn-icon">❌</span>
+          <span>終了する</span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
