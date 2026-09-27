@@ -1,4 +1,4 @@
-const CACHE_NAME = 'farm-voice-memo-v2';
+const CACHE_NAME = 'farm-voice-memo-v3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

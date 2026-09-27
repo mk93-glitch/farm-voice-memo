@@ -50,12 +50,14 @@ class VoiceMemoApp {
       console.warn('Web Speech API 非対応ブラウザです。手入力モードを優先します。');
     }
 
-    // 内部状態
+    // 内部状態 (重複を100%防ぐための構造に改善)
     this.isPaused = false;
     this.isManualMode = false;
     this.isSubmitting = false;
-    this.finalTranscript = '';
-    this.interimTranscript = '';
+
+    this.savedTranscript = '';        // 過去セッションや手入力で確定済みのテキスト
+    this.sessionFinalTranscript = ''; // 現在の認識セッションで確定したテキスト
+    this.interimTranscript = '';      // 現在の認識セッションの未確定テキスト
 
     // ローカルストレージキー
     this.STORAGE_KEYS = {
@@ -78,14 +80,12 @@ class VoiceMemoApp {
       this.enableManualMode(true);
     } else if (this.hasSpeechSupport) {
       this.setupRecognition();
-      // デフォルト: アプリ起動時に即座に録音開始
       if (!this.isPaused) {
         this.startRecognition();
       } else {
         this.updateStatus('paused', '一時停止中');
       }
     } else {
-      // 音声非対応端末は自動で手入力モードへ
       this.enableManualMode(true);
     }
   }
@@ -115,7 +115,7 @@ class VoiceMemoApp {
   restoreState() {
     const savedText = localStorage.getItem(this.STORAGE_KEYS.TEXT);
     if (savedText) {
-      this.finalTranscript = savedText;
+      this.savedTranscript = savedText;
       this.updateDisplay();
     }
 
@@ -132,40 +132,50 @@ class VoiceMemoApp {
 
   // 状態保存
   persistState() {
-    localStorage.setItem(this.STORAGE_KEYS.TEXT, this.finalTranscript);
+    const fullText = this.getFullText();
+    localStorage.setItem(this.STORAGE_KEYS.TEXT, fullText);
     localStorage.setItem(this.STORAGE_KEYS.IS_PAUSED, this.isPaused);
     localStorage.setItem(this.STORAGE_KEYS.IS_MANUAL, this.isManualMode);
   }
 
+  // 現在の全体テキストを取得
+  getFullText() {
+    if (this.isManualMode) {
+      return this.elements.recognizedText.value;
+    }
+    let parts = [];
+    if (this.savedTranscript) parts.push(this.savedTranscript.trim());
+    if (this.sessionFinalTranscript) parts.push(this.sessionFinalTranscript.trim());
+    if (this.interimTranscript) parts.push(this.interimTranscript.trim());
+    return parts.join(' ');
+  }
+
   // イベントバインド
   bindEvents() {
-    // 設定ボタン
     this.elements.settingsToggleBtn.addEventListener('click', () => {
       this.elements.settingsPanel.classList.toggle('hidden');
     });
     this.elements.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
 
-    // 操作ボタン
     this.elements.pauseResumeBtn.addEventListener('click', () => this.togglePauseResume());
     this.elements.manualInputBtn.addEventListener('click', () => this.toggleManualInputMode());
     this.elements.submitBtn.addEventListener('click', () => this.submitMemo());
     this.elements.clearBtn.addEventListener('click', () => this.clearMemo());
 
-    // テキストエリアの手入力監視
+    // 手入力時の入力監視
     this.elements.recognizedText.addEventListener('input', (e) => {
       if (this.isManualMode) {
-        this.finalTranscript = e.target.value;
+        this.savedTranscript = e.target.value;
+        this.sessionFinalTranscript = '';
         this.interimTranscript = '';
         this.updateCharCounterOnly();
         this.persistState();
       }
     });
 
-    // Step 2 ボタン
     this.elements.continueBtn.addEventListener('click', () => this.resetAndStartNew());
     this.elements.closeBtn.addEventListener('click', () => this.closeApp());
 
-    // 画面オフ・スリープ対策: visibilitychange
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         console.log('画面が再表示されました。状態を確認・再開します。');
@@ -179,19 +189,27 @@ class VoiceMemoApp {
     });
   }
 
-  // 音声認識イベント設定
+  // 音声認識のイベント（重複ループ排除処理）
   setupRecognition() {
     this.recognition.onresult = (event) => {
       if (this.isManualMode) return;
+
+      let currentSessionFinal = '';
       let currentInterim = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
+
+      // 毎回インデックス0から走査して現在セッションの文字を完全再構築（これで重複加算を100%防止）
+      for (let i = 0; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          this.finalTranscript += event.results[i][0].transcript;
+          currentSessionFinal += transcript;
         } else {
-          currentInterim += event.results[i][0].transcript;
+          currentInterim += transcript;
         }
       }
+
+      this.sessionFinalTranscript = currentSessionFinal;
       this.interimTranscript = currentInterim;
+
       this.updateDisplay();
       this.persistState();
     };
@@ -207,10 +225,22 @@ class VoiceMemoApp {
 
     this.recognition.onend = () => {
       console.log('Speech recognition ended');
+      // 認識セッション終了時、確定分を savedTranscript に退避
+      this.consolidateTranscripts();
+      
       if (!this.isManualMode && !this.isPaused && !this.isSubmitting) {
         this.startRecognition();
       }
     };
+  }
+
+  // 現在のセッションの確定テキストを永続分へ統合
+  consolidateTranscripts() {
+    if (this.sessionFinalTranscript) {
+      this.savedTranscript = (this.savedTranscript ? this.savedTranscript + ' ' : '') + this.sessionFinalTranscript;
+      this.sessionFinalTranscript = '';
+    }
+    this.interimTranscript = '';
   }
 
   // 音声認識開始
@@ -228,16 +258,17 @@ class VoiceMemoApp {
     try {
       this.recognition.stop();
     } catch (e) {}
+    this.consolidateTranscripts();
   }
 
   // 表示の全更新
   updateDisplay() {
-    const fullText = this.finalTranscript + (this.interimTranscript ? ' ' + this.interimTranscript : '');
+    const fullText = this.getFullText();
     this.elements.recognizedText.value = fullText;
     this.updateCharCounterOnly();
   }
 
-  // 文字数カウントのみ更新
+  // 文字数カウント更新
   updateCharCounterOnly() {
     const count = this.elements.recognizedText.value.trim().length;
     this.elements.charCount.innerText = count;
@@ -249,16 +280,15 @@ class VoiceMemoApp {
     }
   }
 
-  // ステータス更新
+  // ステータス表示更新
   updateStatus(state, text) {
     this.elements.statusIndicator.className = 'status-indicator ' + state;
     this.elements.statusText.innerText = text;
   }
 
-  // 一時停止 / 再開 切替
+  // 一時停止 / 再開
   togglePauseResume() {
     if (this.isManualMode) {
-      // 手入力モードから一時停止ボタンを押した場合は音声認識モードに復帰
       this.enableManualMode(false);
       this.isPaused = false;
       this.startRecognition();
@@ -266,14 +296,12 @@ class VoiceMemoApp {
     }
 
     if (this.isPaused) {
-      // 再開
       this.isPaused = false;
       this.elements.pauseIcon.innerText = '⏸️';
       this.elements.pauseText.innerText = '一時停止';
       this.startRecognition();
       this.updateStatus('recording', '録音中...');
     } else {
-      // 一時停止
       this.isPaused = true;
       this.stopRecognition();
       this.elements.pauseIcon.innerText = '▶️';
@@ -288,7 +316,7 @@ class VoiceMemoApp {
     this.enableManualMode(!this.isManualMode);
   }
 
-  // 手入力モードの有効化/解除
+  // 手入力モード有効化
   enableManualMode(enable) {
     this.isManualMode = enable;
     if (enable) {
@@ -299,6 +327,8 @@ class VoiceMemoApp {
       this.updateStatus('manual', '手入力中');
       this.elements.recognizedText.focus();
     } else {
+      this.consolidateTranscripts();
+      this.savedTranscript = this.elements.recognizedText.value;
       this.elements.recognizedText.setAttribute('readonly', 'readonly');
       this.elements.manualIcon.innerText = '⌨️';
       this.elements.manualText.innerText = '手入力する';
@@ -311,10 +341,11 @@ class VoiceMemoApp {
     this.persistState();
   }
 
-  // やり直し (クリア)
+  // メモ消去
   clearMemo() {
     if (confirm('入力内容を消去してやり直しますか？')) {
-      this.finalTranscript = '';
+      this.savedTranscript = '';
+      this.sessionFinalTranscript = '';
       this.interimTranscript = '';
       this.updateDisplay();
       localStorage.removeItem(this.STORAGE_KEYS.TEXT);
@@ -329,11 +360,11 @@ class VoiceMemoApp {
     }
   }
 
-  // メモ送信
+  // 送信
   async submitMemo() {
+    this.consolidateTranscripts();
     const textToSend = this.elements.recognizedText.value.trim();
 
-    // エラー検知（空送信・ノイズ防止：10文字以下）
     if (textToSend.length <= 10) {
       alert('入力テキストが短すぎます。10文字以上入力またはお喋りしてから送信してください。');
       return;
@@ -348,7 +379,6 @@ class VoiceMemoApp {
       return;
     }
 
-    // 送信処理開始
     this.isSubmitting = true;
     this.stopRecognition();
     this.updateStatus('submitting', '送信中...');
@@ -374,7 +404,8 @@ class VoiceMemoApp {
       const result = await response.json();
 
       if (result.status === 'success') {
-        this.finalTranscript = '';
+        this.savedTranscript = '';
+        this.sessionFinalTranscript = '';
         this.interimTranscript = '';
         localStorage.removeItem(this.STORAGE_KEYS.TEXT);
         this.showStepComplete();
@@ -398,21 +429,19 @@ class VoiceMemoApp {
     }
   }
 
-  // 送信完了画面 (Step 2) の表示
   showStepComplete() {
     this.elements.stepRecording.classList.add('hidden');
     this.elements.stepComplete.classList.remove('hidden');
   }
 
-  // 続けて入力する (Step 1へ戻る)
   resetAndStartNew() {
     this.elements.stepComplete.classList.add('hidden');
     this.elements.stepRecording.classList.remove('hidden');
-    this.finalTranscript = '';
+    this.savedTranscript = '';
+    this.sessionFinalTranscript = '';
     this.interimTranscript = '';
     this.updateDisplay();
 
-    // デフォルト（音声認識モード）に戻す
     this.enableManualMode(false);
     this.isPaused = false;
     this.elements.pauseIcon.innerText = '⏸️';
@@ -420,7 +449,6 @@ class VoiceMemoApp {
     this.startRecognition();
   }
 
-  // 終了する
   closeApp() {
     this.stopRecognition();
     this.persistState();
@@ -431,7 +459,6 @@ class VoiceMemoApp {
   }
 }
 
-// アプリ起動
 window.addEventListener('DOMContentLoaded', () => {
   window.app = new VoiceMemoApp();
 });
