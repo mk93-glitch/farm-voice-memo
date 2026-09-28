@@ -189,21 +189,54 @@ class VoiceMemoApp {
     });
   }
 
-  // 音声認識のイベント（重複ループ排除処理）
+  // 音声認識のイベント（重複ループ排除処理・累積バグ対策）
   setupRecognition() {
     this.recognition.onresult = (event) => {
-      if (this.isManualMode) return;
+      if (this.isManualMode || this.isCleared) return;
 
       let currentSessionFinal = '';
       let currentInterim = '';
 
-      // 毎回インデックス0から走査して現在セッションの文字を完全再構築（これで重複加算を100%防止）
+      // 毎回インデックス0から走査して現在セッションの文字を完全再構築
       for (let i = 0; i < event.results.length; ++i) {
-        const transcript = event.results[i][0].transcript;
+        let transcript = event.results[i][0].transcript.trim();
+        if (!transcript) continue;
+
         if (event.results[i].isFinal) {
-          currentSessionFinal += transcript;
+          if (!currentSessionFinal) {
+            currentSessionFinal = transcript;
+          } else {
+            // Android Web Speech API の累積・重複バグ対策
+            const cleanCurrent = currentSessionFinal.replace(/\s+/g, '');
+            const cleanTranscript = transcript.replace(/\s+/g, '');
+
+            if (cleanTranscript === cleanCurrent) {
+              // 完全一致の場合は無視
+            } else if (cleanTranscript.startsWith(cleanCurrent)) {
+              // 累積テキストとして上書き（前回のテキストを含んでいる場合）
+              currentSessionFinal = transcript;
+            } else if (cleanCurrent.endsWith(cleanTranscript)) {
+              // 末尾の重複送信も無視
+            } else {
+              // 独立した新しいフレーズとして追加
+              currentSessionFinal += ' ' + transcript;
+            }
+          }
         } else {
-          currentInterim += transcript;
+          // interim の処理
+          if (!currentInterim) {
+            currentInterim = transcript;
+          } else {
+            const cleanInterim = currentInterim.replace(/\s+/g, '');
+            const cleanTranscript = transcript.replace(/\s+/g, '');
+            if (cleanTranscript === cleanInterim || cleanInterim.endsWith(cleanTranscript)) {
+              // 無視
+            } else if (cleanTranscript.startsWith(cleanInterim)) {
+              currentInterim = transcript;
+            } else {
+              currentInterim += ' ' + transcript;
+            }
+          }
         }
       }
 
@@ -226,7 +259,9 @@ class VoiceMemoApp {
     this.recognition.onend = () => {
       console.log('Speech recognition ended');
       // 認識セッション終了時、確定分を savedTranscript に退避
-      this.consolidateTranscripts();
+      if (!this.isManualMode && !this.isCleared) {
+        this.consolidateTranscripts();
+      }
       
       if (!this.isManualMode && !this.isPaused && !this.isSubmitting) {
         this.startRecognition();
@@ -247,6 +282,7 @@ class VoiceMemoApp {
   startRecognition() {
     if (!this.hasSpeechSupport || this.isSubmitting || this.isManualMode) return;
     try {
+      this.isCleared = false;
       this.recognition.start();
       this.updateStatus('recording', '録音中...');
     } catch (e) {}
@@ -258,7 +294,7 @@ class VoiceMemoApp {
     try {
       this.recognition.stop();
     } catch (e) {}
-    this.consolidateTranscripts();
+    // ここで consolidateTranscripts() を呼ぶと、遅延して届いた onresult と競合して重複復活するバグを防ぐため削除
   }
 
   // 表示の全更新
@@ -320,6 +356,7 @@ class VoiceMemoApp {
   enableManualMode(enable) {
     this.isManualMode = enable;
     if (enable) {
+      this.isCleared = true;
       this.stopRecognition();
       this.elements.recognizedText.removeAttribute('readonly');
       this.elements.manualIcon.innerText = '🎙️';
@@ -344,6 +381,7 @@ class VoiceMemoApp {
   // メモ消去
   clearMemo() {
     if (confirm('入力内容を消去してやり直しますか？')) {
+      this.isCleared = true;
       this.savedTranscript = '';
       this.sessionFinalTranscript = '';
       this.interimTranscript = '';
@@ -355,15 +393,14 @@ class VoiceMemoApp {
       } else if (this.isPaused) {
         this.togglePauseResume();
       } else {
-        this.startRecognition();
+        this.stopRecognition();
       }
     }
   }
 
   // 送信
   async submitMemo() {
-    this.consolidateTranscripts();
-    const textToSend = this.elements.recognizedText.value.trim();
+    const textToSend = this.getFullText().trim();
 
     if (textToSend.length <= 10) {
       alert('入力テキストが短すぎます。10文字以上入力またはお喋りしてから送信してください。');
@@ -404,6 +441,7 @@ class VoiceMemoApp {
       const result = await response.json();
 
       if (result.status === 'success') {
+        this.isCleared = true;
         this.savedTranscript = '';
         this.sessionFinalTranscript = '';
         this.interimTranscript = '';
