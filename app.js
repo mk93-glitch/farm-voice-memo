@@ -1,3 +1,54 @@
+
+// ==========================================
+// オフライン対応（送信キュー）
+// ==========================================
+function saveToQueue(payload) {
+  let queue = JSON.parse(localStorage.getItem('memoQueue') || '[]');
+  queue.push(payload);
+  localStorage.setItem('memoQueue', JSON.stringify(queue));
+  alert('通信エラーのため一時保存しました。電波が回復した時に自動で送信されます。');
+}
+
+async function syncQueue() {
+  let queue = JSON.parse(localStorage.getItem('memoQueue') || '[]');
+  if (queue.length === 0) return;
+  
+  let gasUrl = localStorage.getItem('gasUrl');
+  if (!gasUrl) return;
+
+  const originalLength = queue.length;
+  let remainingQueue = [];
+
+  for (let payload of queue) {
+    try {
+            if (!navigator.onLine) {
+        saveToQueue(payload);
+        this.clearMemo();
+        this.updateStatus('一時保存完了 (オフライン)', 'ready');
+        return;
+      }
+      let response = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      });
+      let result = await response.json();
+      if (result.status !== 'success') {
+        remainingQueue.push(payload);
+      }
+    } catch(e) {
+      remainingQueue.push(payload);
+    }
+  }
+
+  localStorage.setItem('memoQueue', JSON.stringify(remainingQueue));
+  if(remainingQueue.length < originalLength) {
+    alert(`オフライン時に保存されていた${originalLength - remainingQueue.length}件のメモを自動送信しました！`);
+  }
+}
+
+window.addEventListener('online', syncQueue);
+
 // PWA Service Worker 登録
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
